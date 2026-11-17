@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101828">
+  <title>Tachyon Atlas | Rastreamento ao vivo</title>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+  <style>
+    :root {
+      --ink:#182230; --muted:#697586; --line:#e8ebef; --green:#16a34a;
+      --yellow:#e59a10; --red:#dc3545; --bg:#f8fafc;
+    }
+    * { box-sizing:border-box; }
+    html, body { height:100%; margin:0; font-family:Inter,Arial,Helvetica,sans-serif; color:var(--ink); }
+    #map { position:fixed; inset:0; background:#e6ebed; }
+    .panel {
+      position:absolute; top:20px; left:20px; z-index:5;
+      width:350px; max-height:calc(100dvh - 40px); overflow-y:auto;
+      padding:20px 20px 16px; background:rgba(255,255,255,.97);
+      border:1px solid rgba(255,255,255,.9); border-radius:18px;
+      box-shadow:0 14px 50px rgba(20,30,45,.23);
+      backdrop-filter:blur(12px);
+    }
+    .topbar { display:flex; justify-content:space-between; gap:10px; align-items:start; }
+    .brand { font-weight:850; font-size:26px; line-height:1.1; letter-spacing:-.9px; }
+    .subtitle { margin-top:4px; font-size:12px; color:#596579; }
+    .tag { background:#e9edf5; border-radius:7px; font-size:10px; font-weight:800; letter-spacing:.04em; padding:6px 8px; color:#344054; }
+    .main-status { margin-top:19px; display:flex; align-items:center; gap:9px; font-size:15px; font-weight:750; }
+    .dot { width:11px; height:11px; display:inline-block; flex:0 0 11px; border-radius:50%; background:#c1c7ce; box-shadow:0 0 0 4px #e9edf0; }
+    .main-status.online { color:var(--green); }
+    .main-status.online .dot { background:#22c55e; box-shadow:0 0 0 4px #dcfce7; }
+    .main-status.semgps { color:#a96e00; }
+    .main-status.semgps .dot { background:var(--yellow); box-shadow:0 0 0 4px #fff3d1; }
+    .main-status.offline { color:var(--red); }
+    .main-status.offline .dot { background:var(--red); box-shadow:0 0 0 4px #ffe4e6; }
+    .status-hint { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.4; }
+    h2 { margin:18px 0 9px; padding-top:14px; border-top:1px solid var(--line); font-size:10px; font-weight:850; letter-spacing:.11em; text-transform:uppercase; color:#8993a3; }
+    .row { display:flex; justify-content:space-between; gap:14px; align-items:baseline; margin:9px 0; font-size:13px; }
+    .row span:first-child { color:#4b586a; }
+    .row strong { text-align:right; font-weight:750; word-break:break-word; }
+    .emph { font-size:20px; letter-spacing:-.5px; color:#db9815; }
+    .green { color:var(--green) !important; }
+    .amber { color:#be7c00 !important; }
+    .red { color:var(--red) !important; }
+    .sensor-card { display:flex; gap:11px; align-items:center; padding:13px 12px; background:#f1f5f9; border:1px solid #e4eaf0; border-radius:12px; margin:12px 0 0; }
+    .sensor-icon { width:34px; height:34px; display:flex; flex:0 0 34px; align-items:center; justify-content:center; border-radius:10px; background:#e4e9f1; font-size:18px; }
+    .sensor-caption { font-size:11px; color:#728097; }
+    .sensor-state { margin-top:2px; font-weight:800; font-size:14px; }
+    .button { display:block; text-align:center; width:100%; border:0; border-radius:11px; padding:12px; font:750 13px Arial, sans-serif; cursor:pointer; text-decoration:none; }
+    .maps-button { background:#111827; color:white; margin-top:18px; }
+    .maps-button:hover { background:#334155; }
+    .maps-button.disabled { background:#9ca3af; pointer-events:none; }
+    .foot { text-align:center; color:#98a2b3; font-size:10px; margin-top:12px; }
+    .map-actions { position:absolute; z-index:3; right:18px; bottom:34px; }
+    .map-actions button { border:0; background:#fff; color:#202a38; cursor:pointer; font-size:13px; font-weight:700; border-radius:10px; padding:11px 13px; box-shadow:0 4px 18px rgba(20,30,45,.2); }
+    @media (max-width:600px) {
+      .panel { top:10px; left:10px; width:min(345px,calc(100% - 20px)); max-height:min(67dvh,610px); padding:15px; border-radius:15px; }
+      .brand { font-size:22px; }
+      .map-actions { bottom:28px; right:12px; }
+    }
+  </style>
+</head>
+<body>
+<div id="map" aria-label="Mapa da localização Tachyon Atlas"></div>
+
+<aside class="panel" aria-label="Dados de rastreamento">
+  <div class="topbar">
+    <div><div class="brand">Tachyon Atlas</div><div class="subtitle">by Tachyon Systems</div></div>
+    <span class="tag">PCB • V1</span>
+  </div>
+   <div class="main-status offline" id="statusBox" role="status"><span class="dot"></span><span id="statusText">Aguardando dados</span></div>
+  <div class="status-hint" id="statusHint">Conectando ao Firebase...</div>
+
+  <h2>Localização</h2>
+  <div class="row"><span>Velocidade</span><strong class="emph"><span id="vel">--</span> km/h</strong></div>
+  <div class="row"><span>Altitude</span><strong id="altitude">--</strong></div>
+  <div class="row"><span>Latitude</span><strong id="lat">--</strong></div>
+  <div class="row"><span>Longitude</span><strong id="lng">--</strong></div>
+  <div class="row"><span>Posição</span><strong id="origemPos">--</strong></div>
+
+  <h2>GNSS integrado do SIM7600</h2>
+  <div class="row"><span>Fix</span><strong id="fix">--</strong></div>
+  <div class="row"><span>Satélites</span><strong id="sats">--</strong></div>
+  <div class="row"><span>GPS / GLONASS / BeiDou</span><strong id="constelacoes">--</strong></div>
+  <div class="row"><span>HDOP</span><strong id="hdop">--</strong></div>
+
+  <h2>Rede celular</h2>
+  <div class="row"><span>Internet 4G</span><strong id="internet">--</strong></div>
+  <div class="row"><span>Sinal LTE</span><strong id="sinal">--</strong></div>
+  <div class="row"><span>CSQ</span><strong id="csq">--</strong></div>
+
+  <h2>Entrada da PCB</h2>
+  <div class="sensor-card">
+    <div class="sensor-icon">💡</div>
+    <div><div class="sensor-caption">Lanterna de teste | PC817 • GPIO34</div><div id="sensor" class="sensor-state">Sem leitura</div></div>
+  </div>
+  <div class="row"><span>SMS automático</span><strong id="sms">--</strong></div>
+  <div class="row"><span>Última atualização</span><strong id="ultima">--</strong></div>
+
+  <a id="mapsButton" class="button maps-button disabled" href="#" target="_blank" rel="noopener noreferrer">Abrir no Google Maps</a>
+  <div class="foot">Dados recebidos do Firebase em intervalos de 3 s</div>
+</aside>
+
+<div class="map-actions"><button id="centralizar" type="button">◎ Centralizar no veículo</button></div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+  // Mesma base usada pelo ESP32. Não precisa de SDK nem chave no HTML.
+  const FIREBASE = 'https://gpslocal-ef96e-default-rtdb.firebaseio.com/gps.json';
+  const POSICAO_INICIAL = [-52.406835, -23.073648]; // [longitude, latitude]
+  const OFFLINE_APOS_MS = 45000;  // aguarda até 45 s sem atualização
+  const $ = id => document.getElementById(id);
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: POSICAO_INICIAL,
+    zoom: 16
+  });
+  map.addControl(new maplibregl.NavigationControl({showCompass:false}), 'top-right');
+
+  let marcador = null;
+  let primeiraCoordenada = true;
+  let ultimaCoordenada = null;
+  let requisicaoEmAndamento = false;
+  let ultimoDado = null;
+
+  function status(tipo, texto, detalhe) {
+    $('statusBox').className = 'main-status ' + tipo;
+    $('statusText').textContent = texto;
+    $('statusHint').textContent = detalhe;
+  }
+  function colorir(id, texto, classe = '') {
+    const el = $(id);
+    el.textContent = texto;
+    el.className = classe;
+  }
+  function satCor(n) {
+    if (n <= 2) return 'red';
+    if (n <= 4) return 'amber';
+    return 'green';
+  }
+  function qualidadeCSQ(csq) {
+    if (!Number.isFinite(csq) || csq < 0 || csq > 31) return {texto:'Sem leitura',classe:''};
+    const dbm = -113 + 2 * csq;
+    let classe = 'green', qualidade = 'Muito bom';
+    if (csq <= 7) { classe='red'; qualidade='Muito fraco'; }
+    else if (csq <= 12) { classe='amber'; qualidade='Fraco'; }
+    else if (csq <= 18) { qualidade='Bom'; }
+    return { texto:`${qualidade} (${dbm} dBm)`, classe };
+  }
+  function instanteMs(d) {
+    // Timestamp do SERVIDOR do Firebase em milissegundos.
+    const t = Number(d.ultima_atualizacao);
+     if (Number.isFinite(t) && t > 1000000000000) return t;
+    // Compatibilidade com firmware mais antigo, epoch em segundos.
+    const e = Number(d.ultima_atualizacao_epoch);
+    if (Number.isFinite(e) && e > 1000000000) return e * 1000;
+    return 0;
+  }
+  function valido(lat, lng) {
+    return Number.isFinite(lat) && Number.isFinite(lng) &&
+      Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
+  }
+  function formatarHorario(t) {
+    return t ? new Date(t).toLocaleString('pt-BR', {timeZone:'America/Sao_Paulo'}) : '--';
+  }
+  function centralizar() {
+    if (ultimaCoordenada) map.easeTo({center:ultimaCoordenada, zoom:Math.max(15,map.getZoom()), duration:700});
+  }
+  $('centralizar').addEventListener('click', centralizar);
+
+  function atualizar(d) {
+    ultimoDado = d;
+    const atualizadoEm = instanteMs(d);
+    const idade = Date.now() - atualizadoEm;
+    const online = atualizadoEm > 0 && idade >= -60000 && idade <= OFFLINE_APOS_MS;
+    const fix = d.gps_fix === true;
+    const conectado = d.internet_4g === true;
+
+    if (!online) status('offline', 'Offline', 'Sem telemetria recente do dispositivo.');
+    else if (!fix) status('semgps', 'Online • Sem fix GNSS', 'O ESP32 está enviando dados, mas o GNSS não tem posição nova.');
+    else status('online', 'Online', 'GNSS com fix e telemetria recebida.');
+
+    const vel = Number(d.velocidade_kmh);
+    const alt = Number(d.altitude);
+    $('vel').textContent = Number.isFinite(vel) ? vel.toFixed(1) : '--';
+    $('altitude').textContent = Number.isFinite(alt) ? alt.toFixed(1) + ' m' : '--';
+
+    const lat = d.latitude == null ? NaN : Number(d.latitude);
+    const lng = d.longitude == null ? NaN : Number(d.longitude);
+    const temPosicao = valido(lat,lng);
+    if (temPosicao) {
+      $('lat').textContent = lat.toFixed(6);
+      $('lng').textContent = lng.toFixed(6);
+      colorir('origemPos', fix ? 'Atual' : 'Última conhecida', fix ? 'green' : 'amber');
+      ultimaCoordenada = [lng,lat];
+      if (!marcador) {
+        marcador = new maplibregl.Marker({color:'#101828'})
+          .setLngLat(ultimaCoordenada)
+          .setPopup(new maplibregl.Popup({offset:25}).setText('Tachyon Atlas'))
+          .addTo(map);
+      } else {
+        marcador.setLngLat(ultimaCoordenada);
+      }
+      if (primeiraCoordenada) { primeiraCoordenada=false; centralizar(); }
+      const maps = 'https://www.google.com/maps?q=' + encodeURIComponent(lat.toFixed(7)+','+lng.toFixed(7));
+      $('mapsButton').href = maps;
+      $('mapsButton').classList.remove('disabled');
+    } else {
+      $('lat').textContent = '--'; $('lng').textContent = '--';
+      $('origemPos').textContent = 'Aguardando fix';
+      $('mapsButton').classList.add('disabled');
+    }
+
+    colorir('fix', online ? (fix ? 'FIX' : 'SEM FIX') : 'SEM DADOS', online && fix ? 'green' : 'amber');
+    const sats = Number(d.satelites ?? 0);
+    colorir('sats', Number.isFinite(sats) ? String(sats) : '--', satCor(sats));
+    $('constelacoes').textContent = `${d.satelites_gps ?? 0} / ${d.satelites_glonass ?? 0} / ${d.satelites_beidou ?? 0}`;
+    const hdop = Number(d.hdop);
+    colorir('hdop', Number.isFinite(hdop) && hdop > 0 ? hdop.toFixed(1) : '--',
+      hdop > 0 ? (hdop <= 1.5 ? 'green' : hdop <= 3 ? 'amber' : 'red') : '');
+
+    colorir('internet', !online ? 'Sem telemetria' : (conectado ? 'Online' : 'Offline'), online && conectado ? 'green' : 'red');
+    const csq = Number(d.sinal_4g_csq ?? 99);
+    const q = qualidadeCSQ(csq);
+    colorir('sinal', q.texto, q.classe);
+    $('csq').textContent = csq === 99 ? '--' : csq + ' / 31';
+
+    const opto = d.opto_ligado === true || d.lanterna_ligada === true;
+    colorir('sensor', opto ? 'LIGADA • 12 V detectados' : 'DESLIGADA', opto ? 'red' : 'green');
+    const sms = String(d.sms_status ?? 'AGUARDANDO');
+    $('sms').textContent = sms.replaceAll('_',' ');
+    $('ultima').textContent = formatarHorario(atualizadoEm);
+  }
+
+  async function buscar() {
+    if (requisicaoEmAndamento) return;
+    requisicaoEmAndamento = true;
+    try {
+      const r = await fetch(FIREBASE + '?_=' + Date.now(), {cache:'no-store'});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const dados = await r.json();
+      if (!dados || typeof dados !== 'object') {
+        status('offline','Offline','O caminho /gps do Firebase está vazio.');
+      } else atualizar(dados);
+    } catch (err) {
+      console.error('[Tachyon Atlas] Firebase:', err);
+      status('offline','Falha de consulta','Não foi possível consultar os dados no Firebase.');
+    } finally { requisicaoEmAndamento = false; }
+  }
+  buscar();
+  setInterval(buscar, 3000);
+</script>
+</body>
+</html>
+
+
